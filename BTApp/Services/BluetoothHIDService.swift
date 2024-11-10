@@ -32,6 +32,32 @@ class BluetoothService: NSObject, ObservableObject {
     private let reportMapCharUUID = CBUUID(string: "2A4B")
     private let reportCharUUID = CBUUID(string: "2A4D")
     
+    //session info
+    
+    private var currentSessionId: String?
+    private var connectedCentral: CBCentral?
+    private var activeSessions: [CBCentral: SessionInfo] = [:]
+    @Published var sessionStatus: String = "No Active Session"
+    
+    
+    // Session Info Structure
+    struct SessionInfo {
+        let id: String
+        let timestamp: Date
+        let deviceName: String
+        var lastActivity: Date
+        
+        var debugDescription: String {
+            """
+            Session ID: \(id)
+            Device: \(deviceName)
+            Connected: \(timestamp.formatted())
+            Last Activity: \(lastActivity.formatted())
+            Active Duration: \(Int(lastActivity.timeIntervalSince(timestamp))) seconds
+            """
+        }
+    }
+    
     // MARK: - Initialization
     override init() {
         super.init()
@@ -63,16 +89,43 @@ class BluetoothService: NSObject, ObservableObject {
         isScanning = false
     }
     
-    func connectToDevice(_ peripheral: CBPeripheral) {
-        selectedPeripheral = peripheral
-        centralManager?.connect(peripheral, options: nil)
-    }
+//    func connectToDevice(_ peripheral: CBPeripheral) {
+//        selectedPeripheral = peripheral
+//        centralManager?.connect(peripheral, options: nil)
+//    }
     
+
+//    
+//    func disconnect() {
+//        if let peripheral = selectedPeripheral {
+//            centralManager?.cancelPeripheralConnection(peripheral)
+//        }
+//        stopAdvertising()
+//    }
+    
+    // In the BluetoothService class
+    func connectToDevice(_ peripheral: CBPeripheral) {
+        logger.info("Attempting to connect to peripheral: \(peripheral.identifier)")
+        selectedPeripheral = peripheral
+        peripheral.delegate = self
+        centralManager?.connect(peripheral, options: [
+            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnNotificationKey: true
+        ])
+    }
+
     func disconnect() {
+        logger.info("Initiating disconnect")
         if let peripheral = selectedPeripheral {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
         stopAdvertising()
+        
+        DispatchQueue.main.async {
+            self.isConnected = false
+            self.selectedPeripheral = nil
+        }
     }
     
     // HID Functionality
@@ -147,14 +200,60 @@ class BluetoothService: NSObject, ObservableObject {
 }
 
 // MARK: - CBCentralManagerDelegate
+//extension BluetoothService: CBCentralManagerDelegate {
+//    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+//        switch central.state {
+//        case .poweredOn:
+//            permissionGranted = true
+//        case .poweredOff:
+//            errorMessage = "Bluetooth is turned off"
+//            permissionGranted = false
+//        case .unauthorized:
+//            errorMessage = "Bluetooth permission denied"
+//            permissionGranted = false
+//        case .unsupported:
+//            errorMessage = "BLE is not supported"
+//            permissionGranted = false
+//        default:
+//            errorMessage = "Bluetooth is not available"
+//            permissionGranted = false
+//        }
+//    }
+//    
+//    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+//                       advertisementData: [String: Any], rssi RSSI: NSNumber) {
+//        if let deviceName = peripheral.name, !deviceName.isEmpty {
+//            if !discoveredDevices.contains(where: { $0.identifier == peripheral.identifier }) {
+//                discoveredDevices.append(peripheral)
+//            }
+//        }
+//    }
+//    
+//    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+//        isConnected = true
+//        peripheral.delegate = self
+//        peripheral.discoverServices(nil)
+//    }
+//    
+//    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+//        isConnected = false
+//        selectedPeripheral = nil
+//    }
+//}
+
+
+// MARK: - CBCentralManagerDelegate
 extension BluetoothService: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        logger.info("Central manager state updated: \(central.state.rawValue)")
+        
         switch central.state {
         case .poweredOn:
             permissionGranted = true
         case .poweredOff:
             errorMessage = "Bluetooth is turned off"
             permissionGranted = false
+            isConnected = false
         case .unauthorized:
             errorMessage = "Bluetooth permission denied"
             permissionGranted = false
@@ -169,33 +268,146 @@ extension BluetoothService: CBCentralManagerDelegate {
     
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        logger.info("Discovered peripheral: \(peripheral.identifier)")
+        
         if let deviceName = peripheral.name, !deviceName.isEmpty {
-            if !discoveredDevices.contains(where: { $0.identifier == peripheral.identifier }) {
-                discoveredDevices.append(peripheral)
+            DispatchQueue.main.async {
+                if !self.discoveredDevices.contains(where: { $0.identifier == peripheral.identifier }) {
+                    self.discoveredDevices.append(peripheral)
+                }
             }
         }
     }
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        isConnected = true
-        peripheral.delegate = self
-        peripheral.discoverServices(nil)
+        logger.info("Connected to peripheral: \(peripheral.identifier)")
+        
+        DispatchQueue.main.async {
+            self.isConnected = true
+            peripheral.delegate = self
+            peripheral.discoverServices(nil)
+        }
+    }
+    
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        logger.error("Failed to connect to peripheral: \(peripheral.identifier), error: \(String(describing: error))")
+        
+        DispatchQueue.main.async {
+            self.isConnected = false
+            self.selectedPeripheral = nil
+            self.errorMessage = "Failed to connect: \(error?.localizedDescription ?? "Unknown error")"
+        }
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        isConnected = false
-        selectedPeripheral = nil
+        logger.info("Disconnected from peripheral: \(peripheral.identifier)")
+        
+        DispatchQueue.main.async {
+            self.isConnected = false
+            self.selectedPeripheral = nil
+            if let error = error {
+                self.errorMessage = "Disconnected: \(error.localizedDescription)"
+            }
+        }
     }
 }
 
 // MARK: - CBPeripheralDelegate
+//extension BluetoothService: CBPeripheralDelegate {
+//    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+//        guard let services = peripheral.services else { return }
+//        
+//        for service in services {
+//            peripheral.discoverCharacteristics(nil, for: service)
+//        }
+//    }
+//}
+
+// MARK: - CBPeripheralDelegate
 extension BluetoothService: CBPeripheralDelegate {
+    func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        logger.info("Services modified for peripheral: \(peripheral.identifier)")
+        peripheral.discoverServices(nil)
+    }
+    
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let services = peripheral.services else { return }
+        if let error = error {
+            logger.error("Error discovering services: \(error.localizedDescription)")
+            return
+        }
+        
+        guard let services = peripheral.services else {
+            logger.error("No services found")
+            return
+        }
+        
+        logger.info("Discovered \(services.count) services")
         
         for service in services {
+            logger.info("Discovering characteristics for service: \(service.uuid)")
             peripheral.discoverCharacteristics(nil, for: service)
         }
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        if let error = error {
+            logger.error("Error discovering characteristics: \(error.localizedDescription)")
+            return
+        }
+        
+        guard let characteristics = service.characteristics else {
+            logger.error("No characteristics found")
+            return
+        }
+        
+        logger.info("Discovered \(characteristics.count) characteristics for service: \(service.uuid)")
+        
+        for characteristic in characteristics {
+            logger.info("Characteristic discovered: \(characteristic.uuid)")
+            
+            // Subscribe to notifications if the characteristic supports it
+            if characteristic.properties.contains(.notify) {
+                logger.info("Subscribing to characteristic: \(characteristic.uuid)")
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+            
+            // Read the value if the characteristic is readable
+            if characteristic.properties.contains(.read) {
+                logger.info("Reading value for characteristic: \(characteristic.uuid)")
+                peripheral.readValue(for: characteristic)
+            }
+        }
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            logger.error("Error updating characteristic value: \(error.localizedDescription)")
+            return
+        }
+        
+        logger.info("Value updated for characteristic: \(characteristic.uuid)")
+        if let value = characteristic.value {
+            logger.info("New value: \(value.map { String(format: "%02x", $0) }.joined())")
+        }
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            logger.error("Error writing characteristic value: \(error.localizedDescription)")
+            return
+        }
+        
+        logger.info("Value written to characteristic: \(characteristic.uuid)")
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            logger.error("Error updating notification state: \(error.localizedDescription)")
+            return
+        }
+        
+        logger.info("Notification state updated for characteristic: \(characteristic.uuid)")
+        logger.info("Is notifying: \(characteristic.isNotifying)")
     }
 }
 
@@ -219,14 +431,64 @@ extension BluetoothService: CBPeripheralManagerDelegate {
         }
     }
     
-    func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
-        isConnected = true
-        logger.info("Central subscribed to characteristic")
-    }
+//    func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
+//        isConnected = true
+//        logger.info("Central subscribed to characteristic")
+//    }
+//    
+//    func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
+//        isConnected = false
+//        logger.info("Central unsubscribed from characteristic")
+//    }
     
+    
+    // RUpdated peripheralManager delegate methods
+    func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
+        // Generate new session ID when device connects
+        let sessionId = UUID().uuidString
+        let sessionInfo = SessionInfo(
+            id: sessionId,
+            timestamp: Date(),
+            deviceName: central.identifier.uuidString,
+            lastActivity: Date()
+        )
+        
+        activeSessions[central] = sessionInfo
+        connectedCentral = central
+        currentSessionId = sessionId
+        
+        logger.info("""
+        ======= New Session Established =======
+        \(sessionInfo.debugDescription)
+        =====================================
+        """)
+        
+        DispatchQueue.main.async {
+            self.isConnected = true
+            self.sessionStatus = "Active Session: \(sessionId)"
+        }
+    }
+
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
-        isConnected = false
-        logger.info("Central unsubscribed from characteristic")
+        if let sessionInfo = activeSessions[central] {
+            logger.info("""
+            ======= Session Terminated =======
+            \(sessionInfo.debugDescription)
+            ================================
+            """)
+            
+            activeSessions.removeValue(forKey: central)
+            
+            if central.identifier == connectedCentral?.identifier {
+                currentSessionId = nil
+                connectedCentral = nil
+            }
+        }
+        
+        DispatchQueue.main.async {
+            self.isConnected = false
+            self.sessionStatus = "No Active Session"
+        }
     }
     
     private func setupHIDService() {
@@ -255,3 +517,7 @@ extension BluetoothService: CBPeripheralManagerDelegate {
         peripheralManager?.add(hidService!)
     }
 }
+
+
+
+

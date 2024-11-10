@@ -7,10 +7,10 @@ struct ContentView: View {
     @State private var keyboardText: String = ""
     
     var body: some View {
-        VStack {
+        VStack(spacing: 20) {
             // Connection Status with correct SF Symbol names
             HStack {
-                Image(systemName: bluetoothService.isConnected ? "dot.radiowaves.left.and.right" : "dot.radiowaves.left.and.right.slash")
+                Image( bluetoothService.isConnected ? "dot.radiowaves.left.and.right" : "dot.radiowaves.left.and.right.slash")
                     .foregroundColor(bluetoothService.isConnected ? .blue : .gray)
                 Text(bluetoothService.isConnected ? "Connected" : "Disconnected")
                     .foregroundColor(bluetoothService.isConnected ? .blue : .gray)
@@ -36,13 +36,32 @@ struct ContentView: View {
                 )
                 
                 // Keyboard View
+//                KeyboardView(
+//                    text: $keyboardText,
+//                    isConnected: bluetoothService.isConnected,
+//                    onKeyPress: { keyCode, pressed in
+//                        bluetoothService.sendKeyPress(keyCode: keyCode, pressed: pressed)
+//                    }
+//                )
+                
+//                KeyboardView(
+//                        text: $keyboardText,
+//                        isConnected: bluetoothService.isConnected,
+//                        onKeyPress: { keyCode, pressed in
+//                                        bluetoothService.sendKeyPress(keyCode: keyCode, pressed: pressed)
+//                                    }
+//                                )
+//                                .frame(maxHeight: 300)
+                
                 KeyboardView(
-                    text: $keyboardText,
-                    isConnected: bluetoothService.isConnected,
-                    onKeyPress: { keyCode, pressed in
-                        bluetoothService.sendKeyPress(keyCode: keyCode, pressed: pressed)
-                    }
-                )
+                           text: $keyboardText,
+                           isConnected: bluetoothService.isConnected
+                       ) { keyCode, pressed, isModifier in
+                           bluetoothService.sendKeyPress(
+                               keyCode: keyCode,
+                               pressed: pressed
+                           )
+                       }
                 
                 // Disconnect Button
                 Button(action: {
